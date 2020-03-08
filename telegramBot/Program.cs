@@ -14,7 +14,7 @@ namespace telegramBot
     class Program
     {
         static string api = "1003901903:AAEDl1DxCWC6GSk8aTrykALi_3BI9SemaBg", admin_id = "230696909", sem = "", specialisation = "", group = "";
-        static int prevTableMesId = -1;
+        static int prevTableMesId = -1, prevReminderMesId = -1, remindMinutes = -1, remindHours = -1;
         static TelegramBotClient Bot = new TelegramBotClient(api);
         static List<LessonDay> days = new List<LessonDay>();
         static void Main()
@@ -25,6 +25,22 @@ namespace telegramBot
             bw.RunWorkerAsync();
             Console.ReadKey();
             bw.Dispose();
+
+            /*Uri uri = new Uri($"https://guide.herzen.spb.ru/static/schedule.php");
+            string page = "";
+            using (var httpClient = new System.Net.Http.HttpClient())
+            {
+                try { page = await httpClient.GetStringAsync(uri).ConfigureAwait(false); }
+                catch (Exception ex) { Console.WriteLine($"Ошибка {ex.Message}"); return; }
+            }
+            var all = new Regex(@"(?<=<li.*?>)(бакалавриат|магистратура|специалитет).+?(?=</div>)").Matches(page);
+            using (StreamWriter f = new StreamWriter(@"..\..\Res\Bakalavr.txt", false, System.Text.Encoding.UTF8))
+            {
+                for(int i = 0; i < all.Count; i++)
+                {
+                    f.WriteLine(all[i].Value);
+                }
+            }*/
         }
         static void BwDoWork(object sender, DoWorkEventArgs e)
         {
@@ -68,7 +84,13 @@ namespace telegramBot
                             try {await Bot.DeleteMessageAsync(message.Chat.Id, prevTableMesId).ConfigureAwait(false);}
                             catch(Exception e) { Console.WriteLine(e.Message);};
                         }
-                        prevTableMesId = (await SendMessage(message, $"Окей, можешь выбирать.\nПодгруппа: {group}.", BotInline(5, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя")).ConfigureAwait(false)).MessageId;
+                        prevTableMesId = (await SendMessage(message, $"Окей, можешь выбирать.\nПодгруппа: {group}.", BotInline(6, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя", "Напоминание")).ConfigureAwait(false)).MessageId;
+                        if(prevReminderMesId != -1)
+                        {
+                            try { await Bot.DeleteMessageAsync(message.Chat.Id, prevReminderMesId).ConfigureAwait(false); prevReminderMesId = -1; }
+                            catch (Exception e) { Console.WriteLine(e.Message); }
+                            break;
+                        }
                         break;
                     }
                     case "Пара сейчас":
@@ -81,7 +103,55 @@ namespace telegramBot
                         await ShowLessons(message, ev.CallbackQuery.Data, isTmrw: true).ConfigureAwait(false); break;
                     case "Вся Неделя":
                         await ShowLessons(message, ev.CallbackQuery.Data, isAllWeek: true).ConfigureAwait(false); break;
+                    case "Напоминание" when !await SmthIsNull(message).ConfigureAwait(false):
+                    {
+                        if (remindMinutes != -1 || remindHours != -1)
+                            remindHours = remindMinutes = -1;
+                        string text = "Я тебе буду напоминать о начале первой пары следющего дня пока ты не отменишь это действие.\n" +
+                                      "Сейчас нужно определиться, за сколько времени тебе отправлять напоминание.\nВыбери количетсво минут.";
+                        var reply = BotInline(4, "0 мин", "5 мин", "10 мин", "15 мин", "20 мин", "25 мин", "30 мин", "35 мин", "40 мин", "45 мин", "50 мин", "55 мин");
+                        if (prevReminderMesId != -1)
+                        {
+                            try {prevReminderMesId = (await Bot.EditMessageTextAsync(message.Chat.Id, prevReminderMesId, text, replyMarkup: reply).ConfigureAwait(false)).MessageId;}
+                            catch (Exception e) { Console.WriteLine(e.Message); }
+                            break;
+                        }
+                        prevReminderMesId = (await SendMessage(message, text, reply).ConfigureAwait(false)).MessageId;
+                        break;
+                    }
+                    case "Отменить" when (remindMinutes != -1 && remindHours != -1) :
+                    {
+                        Console.WriteLine("Отменено"); break;
+                    }
                 }
+                #region Работа с напоминанием
+                var remindTime = new Regex(@"\d\d?(?=\s(час)|\s(мин))").Match(ev.CallbackQuery.Data);
+                if (remindTime.Success && !await SmthIsNull(message).ConfigureAwait(false))
+                {
+                    if (remindTime.Groups[2].Value.Length != 0)
+                    {
+                        remindMinutes = Convert.ToInt32(remindTime.Groups[0].Value);
+                        try
+                        {
+                            prevReminderMesId = (await Bot.EditMessageTextAsync(message.Chat.Id, prevReminderMesId, $"Минут: {remindMinutes}\nВыбери количетсво часов.", 
+                                replyMarkup: BotInline(6, "0 часов", "1 час", "2 часа", "3 часа", "4 часа", "5 часов", "6 часов", "7 часов", "8 часов", "9 часов", "10 часов",
+                                "11 часов", "12 часов", "13 часов", "14 часов", "15 часов", "16 часов", "17 часов", "18 часов", "19 часов", "20 часов", "21 час", "22 часа", "23 часа")).ConfigureAwait(false)).MessageId;
+                        }
+                        catch (Exception e) { Console.WriteLine(e.Message); }
+                    }
+                    else 
+                    {
+                        remindHours = Convert.ToInt32(remindTime.Groups[0].Value);
+                        try 
+                        {
+                            prevReminderMesId = (await Bot.EditMessageTextAsync(message.Chat.Id, prevReminderMesId, $"Я буду тебе напоминать о начале первой пары каждый день за {ev.CallbackQuery.Data} {remindMinutes} минут.",
+                            replyMarkup: BotInline(1, "Отменить")).ConfigureAwait(false)).MessageId;
+                            await Reminder(message, remindHours, remindMinutes).ConfigureAwait(false);
+                        }
+                        catch (Exception e) { Console.WriteLine(e.Message); }
+                    } 
+                }
+                #endregion
                 try {await Bot.AnswerCallbackQueryAsync(ev.CallbackQuery.Id).ConfigureAwait(false);}
                 catch(Exception e) {Console.WriteLine(e.Message);}
             };
@@ -104,7 +174,7 @@ namespace telegramBot
                     case "/start":
                     {
                         sem = specialisation = group = "";
-                        prevTableMesId = -1;
+                        prevTableMesId = prevReminderMesId = remindMinutes = remindHours = -1;
                         await SendMessage(message, "Привет, глянь на название бота и ответь на вопрос.\n" +
                                     "Ты с ИСиТа?", BotInline(1, "Да", "Нет")).ConfigureAwait(false);
                         break;
@@ -145,7 +215,7 @@ namespace telegramBot
             Bot.StartReceiving();
         }
         #region Функционал бота
-        static ReplyKeyboardMarkup BotReply(bool isHide, int rows, params string[] items)
+        static ReplyKeyboardMarkup BotReply(bool hide, int rows, params string[] items)
         {
             //функция создает reply клавиатуру с заданым количеством кнопок и рядов
             if (rows < 1 || rows > items.Length) throw new ArgumentOutOfRangeException(nameof(rows), "Rows more than quantity of elements or rows less than 0");
@@ -165,7 +235,7 @@ namespace telegramBot
             var keyboard = new ReplyKeyboardMarkup();
             keyboard.Keyboard = k_arr;
             keyboard.ResizeKeyboard = true;
-            keyboard.OneTimeKeyboard = isHide;
+            keyboard.OneTimeKeyboard = hide;
             return keyboard;
         }
         static InlineKeyboardMarkup BotInline(int rows, params string[] items)
@@ -235,21 +305,22 @@ namespace telegramBot
         static async Task BackToDefault(Message message)
         {
             sem = specialisation = group = "";
-            prevTableMesId = -1;
+            prevTableMesId = prevReminderMesId = remindMinutes = remindHours = -1;
             await SendMessage(message, "Так-так-так...\nЧто-то не то. Давай заново.\n" +
                 "Ты с ИСиТа?", BotInline(1, "Да", "Нет")).ConfigureAwait(false);
             return;
         }
-        static async Task ShowLessons(Message message, string action = "", int lessonNumber = -1, bool isTmrw = false, bool isAllWeek = false)
+        static async Task<Lesson> ShowLessons(Message message, string action = "", int lessonNumber = -1, bool isTmrw = false, bool isAllWeek = false, int inc = -1)
         {
             if (await SmthIsNull(message).ConfigureAwait(false))
-                return;
+                return null;
             else if(group.Length == 0)
             {
                 await BackToDefault(message).ConfigureAwait(false);
-                return;
+                return null;
             }
-            DateTime now = isTmrw ? DateTime.Now.AddDays(1) : DateTime.Now;
+            //переменная inc нужна для функции reminder, чтобы увиличивать день до то пор, пока не найдется первый 
+            DateTime now = isTmrw ? DateTime.Now.AddDays(2 + inc) : DateTime.Now;
             string result = $"Держи: {action}\n", oneDay = "", week = Week();
             bool isAllGroups = group.Equals("Все подгруппы") ? true : false, considerTime = !isAllWeek;
             int extraDays = 0;//это нужно в том случае, если юзер спрашивает неделю
@@ -264,6 +335,7 @@ namespace telegramBot
                 case "Sunday": oneDay = "ВОСКРЕСЕНЬЕ"; extraDays = 7; week = week.Equals("Верхняя") ? "Нижняя" : "Верхняя"; week += $", начиная с завтрашнего дня"; break;
             }
             result += $"Неделя: {week}\n";
+            List<Lesson> day = new List<Lesson>(); int j = 0;//объявляются здесь, чтобы передать ину Reminder()
             // составляем расписание
             for (int i = 0; i<days.Count; i++)
             {
@@ -271,14 +343,17 @@ namespace telegramBot
                 if (considerTime && !dayName.Equals(oneDay))
                     continue;
                 result += $"\n📆 {dayName}\n";
-                List<Lesson> day = days[i].Lessons;
+                day = days[i].Lessons;
                 int number = 1;
-                for (int j = 0; j < day.Count; j++)
+                #warning Доделать вывод расписания
+                for (j = 0; j < day.Count; j++)
                 {
                     DateTime endTime = new DateTime();
                     int beginDay = day[j].BeginDate.DayOfYear, endDay = day[j].EndDate.DayOfYear;
+
                     if (day[j].EndTime[0] != -1)//если пара есть, то создать DateTime с точной датой
                         endTime = new DateTime(now.Year, now.Month, now.Day, day[j].EndTime[0], day[j].EndTime[1], 0); 
+
                     if (day[j].Name.Length != 0 //пропускаем пустые 
                      && ((isAllWeek && now.DayOfYear + extraDays >= beginDay) //пропускаем неподходящие по дате
                         || (now.DayOfYear >= beginDay && now.DayOfYear <= endDay)
@@ -300,17 +375,39 @@ namespace telegramBot
             }
         outer:
             result += result.Contains("Пара:") ? "" : "У-ля-ля! Отдыхай!";
-            try {await Bot.EditMessageTextAsync(message.Chat.Id, message.MessageId, result, replyMarkup: BotInline(5, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя"), parseMode: ParseMode.Markdown).ConfigureAwait(false);}
+            if (inc != -1 && result.Contains("Пара")) return day[j];
+            try {await Bot.EditMessageTextAsync(message.Chat.Id, message.MessageId, result, replyMarkup: BotInline(6, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя", "Напоминание"), parseMode: ParseMode.Markdown).ConfigureAwait(false);}
             catch(Exception e) {Console.WriteLine(e.Message);}
+            return null;
+        }
+        static async Task Reminder(Message message, int hours, int minutes) 
+        {
+            int i = 0;
+            while (true)
+            {
+                Lesson day = await ShowLessons(message, inc: i, lessonNumber: 1).ConfigureAwait(false);
+                if (day != null) break; i++;
+            }
+            //var remindDay = DateTime.Now.AddDays(i+1);
+            //var reg = new Regex(@"(\d?\d):(\d\d)(?=\s)").Match(result);
+            //DateTime firstLes = new DateTime(remindDay.Year, remindDay.Month, remindDay.Day, Convert.ToInt32(reg.Groups[1].Value), Convert.ToInt32(reg.Groups[2].Value), 0);
+            //remindDay = firstLes.AddHours(-hours).AddMinutes(-minutes);
+            //if (DateTime.Now.CompareTo(remindDay) != -1)
+
             return;
+            //await ShowLessons(message, DateTime.UtcNow.AddDays(1), ev.CallbackQuery.Data, isTmrw: true).ConfigureAwait(false);
         }
         #endregion
         #region Работа с расписанием
-        static async Task UpdateTable(Message message)
+        static async Task UpdateTable(Message message, bool isIsit = true)
         {
             if (await SmthIsNull(message).ConfigureAwait(false)) return;
             #region Загружаем html код страницы расписания
-            Uri uri = new Uri($"https://guide.herzen.spb.ru/static/schedule_view.php?id_group=10749&sem={sem}");
+            Uri uri;
+            if (isIsit)
+                uri = new Uri($"https://guide.herzen.spb.ru/static/schedule_view.php?id_group=10749&sem={sem}");
+            else
+                uri = new Uri($"https://guide.herzen.spb.ru/static/schedule_view.php?id_group=10749&sem={sem}");
             string page = "";
             using (var httpClient = new System.Net.Http.HttpClient())
             {
@@ -337,12 +434,13 @@ namespace telegramBot
             {
                 group = "Подгрупп нет";
                 await SendMessage(message, $"Окей, подгрупп у тебя нет, так что можешь приступать.",
-                    BotInline(5, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя")).ConfigureAwait(false);
+                    BotInline(6, "Пара сейчас", "Следующая пара", "Сегодня", "Завтра", "Вся Неделя", "Напоминание")).ConfigureAwait(false);
             }
             //Подгружаем дни
             days.Clear();
+            #warning Изменения в расписании считаются отдельным днем
             var s = new Regex("(?<=\"dayname\").*?(dayname|tbody)").Matches(page);
-            for (int i = 0; i < s.Count; i++)
+            for (int i = 0; i < s.Count-1; i++)
                 days.Add(new LessonDay(s[i].ToString(), groups));
             return;
         }
